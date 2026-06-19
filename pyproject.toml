@@ -1,0 +1,33 @@
+[project]
+name = "car-damage-e2e"
+version = "0.1.0"
+description = "End-to-end computer vision project for car damage detection"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas",
+    "numpy",
+    "pillow",
+    "matplotlib",
+    "torch",
+    "torchvision",
+    "opencv-python",
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+    "pre-commit",
+]
+
+[tool.setuptools]
+packages = ["src", "src.data"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.black]
+line-length = 100
