@@ -1,0 +1,21 @@
+data:
+  data_dir: /content/drive/MyDrive/datasets/CarDD_COCO
+  train_split: train
+  val_split: val
+  max_train_samples: null
+
+model:
+  num_classes: 7
+  pretrained: true
+
+training:
+  epochs: 5
+  batch_size: 4
+  num_workers: 2
+  device: cuda
+  output_dir: /content/drive/MyDrive/car-damage-e2e/outputs/fasterrcnn_baseline
+
+optimizer:
+  lr: 0.005
+  momentum: 0.9
+  weight_decay: 0.0005
