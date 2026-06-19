@@ -1,7 +1,3 @@
-import random
-import numpy as np
-import torch
-
 def collate_fn(batch):
     return tuple(zip(*batch))
 
