@@ -197,3 +197,12 @@ __pycache__/
 .venv/
 
 .env
+
+.DS_Store
+
+.DS_Store
+*.egg-info/
+__pycache__/
+.ipynb_checkpoints/
+.pytest_cache/
+mlruns/
