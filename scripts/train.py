@@ -38,16 +38,20 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs):
 
         optimizer.zero_grad()
 
-        with torch.amp.autocast(
-            device_type=device.type,
-            enabled=device.type == "cuda",
-        ):
+        if device.type == "cuda":
+            with torch.amp.autocast(device_type="cuda"):
+                loss_dict = model(images, targets)
+                loss = sum(loss_dict.values())
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
             loss_dict = model(images, targets)
             loss = sum(loss_dict.values())
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+            loss.backward()
+            optimizer.step()
 
         loss_value = loss.item()
         running_loss += loss_value
@@ -77,8 +81,12 @@ def validate_loss(model, loader, device, epoch, epochs):
         images = [img.to(device) for img in images]
         targets = move_targets_to_device(targets, device)
 
-        loss_dict = model(images, targets)
-        loss = sum(loss_dict.values())
+        with torch.amp.autocast(
+            device_type=device.type,
+            enabled=device.type == "cuda",
+        ):
+            loss_dict = model(images, targets)
+            loss = sum(loss_dict.values())
 
         loss_value = loss.item()
         running_loss += loss_value
@@ -99,14 +107,51 @@ def maybe_subset(dataset, max_samples):
 
 
 def main():
+    
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/train.yaml",
+    )
+
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+    )
+
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    data_dir = Path(cfg["data"]["data_dir"])
+    print("=" * 60)
+    print(yaml.dump(cfg, sort_keys=False))
+    print("=" * 60)
+
+    if args.data_dir is not None:
+        data_dir = Path(args.data_dir)
+    elif cfg["data"]["data_dir"] is not None:
+        data_dir = Path(cfg["data"]["data_dir"])
+    else:
+        raise ValueError(
+            "Dataset directory is not specified. "
+            "Pass --data-dir or set data.data_dir in the config."
+        )
     output_dir = Path(cfg["training"]["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,6 +159,7 @@ def main():
     print(f"Using device: {device}")
 
     set_seed(cfg["training"]["seed"])
+    epochs = cfg["training"]["epochs"]
 
     transforms = T.Compose([
         T.ToImage(),
@@ -141,6 +187,8 @@ def main():
         shuffle=True,
         num_workers=cfg["training"]["num_workers"],
         collate_fn=collate_fn,
+        pin_memory=device.type == "cuda",
+        persistent_workers=cfg["training"]["num_workers"] > 0,
     )
 
     val_loader = DataLoader(
@@ -149,6 +197,8 @@ def main():
         shuffle=False,
         num_workers=cfg["training"]["num_workers"],
         collate_fn=collate_fn,
+        pin_memory=device.type == "cuda",
+        persistent_workers=cfg["training"]["num_workers"] > 0,
     )
 
     model = build_model(
@@ -172,7 +222,6 @@ def main():
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
 
     best_val_loss = float("inf")
-    epochs = cfg["training"]["epochs"]
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, scaler, device, epoch, epochs)
@@ -188,6 +237,8 @@ def main():
             "epoch": epoch + 1,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "scaler_state_dict": scaler.state_dict(),
             "train_loss": train_loss,
             "val_loss": val_loss,
             "config": cfg,
