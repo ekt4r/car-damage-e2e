@@ -3,23 +3,15 @@ from pathlib import Path
 
 import torch
 import yaml
+import numpy as np
+import random
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
 from torchvision.transforms import v2 as T
 
 from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
-from src.training.utils import collate_fn
-
-
-def get_device(device_name: str) -> torch.device:
-    if device_name == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-    return torch.device(device_name)
+from src.training.utils import collate_fn, set_seed, get_device
 
 
 def move_targets_to_device(targets, device):
@@ -32,7 +24,7 @@ def move_targets_to_device(targets, device):
     ]
 
 
-def train_one_epoch(model, loader, optimizer, device, epoch, epochs):
+def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs):
     model.train()
 
     running_loss = 0.0
@@ -44,12 +36,18 @@ def train_one_epoch(model, loader, optimizer, device, epoch, epochs):
         images = [img.to(device) for img in images]
         targets = move_targets_to_device(targets, device)
 
-        loss_dict = model(images, targets)
-        loss = sum(loss_dict.values())
-
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+
+        with torch.amp.autocast(
+            device_type=device.type,
+            enabled=device.type == "cuda",
+        ):
+            loss_dict = model(images, targets)
+            loss = sum(loss_dict.values())
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         loss_value = loss.item()
         running_loss += loss_value
@@ -58,6 +56,7 @@ def train_one_epoch(model, loader, optimizer, device, epoch, epochs):
         pbar.set_postfix(
             loss=f"{loss_value:.4f}",
             avg_loss=f"{running_loss / step:.4f}",
+            lr=f"{optimizer.param_groups[0]['lr']:.2e}",
         )
 
     return running_loss / step
@@ -114,6 +113,8 @@ def main():
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
 
+    set_seed(cfg["training"]["seed"])
+
     transforms = T.Compose([
         T.ToImage(),
         T.ToDtype(torch.float32, scale=True),
@@ -163,11 +164,18 @@ def main():
         weight_decay=cfg["optimizer"]["weight_decay"],
     )
 
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=epochs,
+    )
+
+    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
+
     best_val_loss = float("inf")
     epochs = cfg["training"]["epochs"]
 
     for epoch in range(epochs):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device, epoch, epochs)
+        train_loss = train_one_epoch(model, train_loader, optimizer, scaler, device, epoch, epochs)
         val_loss = validate_loss(model, val_loader, device, epoch, epochs)
 
         print(
@@ -191,6 +199,8 @@ def main():
             best_val_loss = val_loss
             torch.save(checkpoint, output_dir / "best.pth")
             print(f"Saved best checkpoint: val_loss={best_val_loss:.4f}")
+
+        scheduler.step()
 
 
 if __name__ == "__main__":
