@@ -9,6 +9,7 @@ model:
   pretrained: true
 
 training:
+  seed: 42
   epochs: 5
   batch_size: 4
   num_workers: 2
