@@ -1,3 +1,7 @@
+import random
+import numpy as np
+import torch
+
 def collate_fn(batch):
     return tuple(zip(*batch))
 
@@ -16,7 +20,7 @@ def set_seed(seed: int = 42):
 
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    #torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def get_device(device_name: str) -> torch.device:
