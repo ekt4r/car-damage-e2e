@@ -15,7 +15,7 @@ model:
 
 optimizer:
   name: sgd
-  lr: 0.003
+  lr: 0.005
   momentum: 0.9
   weight_decay: 0.0005
 
@@ -25,11 +25,11 @@ scheduler:
 
 training:
   seed: 42
-  epochs: 20
-  batch_size: 8
+  epochs: 5
+  batch_size: 4
   num_workers: 4
-  device: auto
-  output_dir: outputs/fasterrcnn_mobilenet
+  device: cuda
+  output_dir: outputs/mobilenet_baseline
 
 early_stopping:
   patience: 4
@@ -45,10 +45,10 @@ tta:
 
 augmentations:
   train:
-    horizontal_flip: true
-    brightness_contrast: true
-    motion_blur: true
-    gauss_noise: true
+    horizontal_flip: false
+    brightness_contrast: false
+    motion_blur: false
+    gauss_noise: false
     affine: false
   valid:
     enabled: false

@@ -1,22 +1,43 @@
 import numpy as np
 import torch
-from PIL import Image
-
 import albumentations as A
 
 
-def get_train_transforms():
-    return A.Compose(
-        [
-            A.HorizontalFlip(p=0.5),
+def get_train_transforms(cfg):
+    aug_cfg = cfg.get("augmentations", {}).get("train", {})
+
+    transforms = []
+
+    if aug_cfg.get("horizontal_flip", False):
+        transforms.append(A.HorizontalFlip(p=0.5))
+
+    if aug_cfg.get("brightness_contrast", False):
+        transforms.append(
             A.RandomBrightnessContrast(
                 brightness_limit=0.2,
                 contrast_limit=0.2,
                 p=0.5,
-            ),
-            A.MotionBlur(blur_limit=5, p=0.2),
-            A.GaussNoise(p=0.2),
-        ],
+            )
+        )
+
+    if aug_cfg.get("motion_blur", False):
+        transforms.append(A.MotionBlur(blur_limit=5, p=0.2))
+
+    if aug_cfg.get("gauss_noise", False):
+        transforms.append(A.GaussNoise(p=0.2))
+
+    if aug_cfg.get("affine", False):
+        transforms.append(
+            A.Affine(
+                scale=(0.9, 1.1),
+                translate_percent=(-0.05, 0.05),
+                rotate=(-7, 7),
+                p=0.3,
+            )
+        )
+
+    return A.Compose(
+        transforms,
         bbox_params=A.BboxParams(
             format="pascal_voc",
             label_fields=["labels"],
@@ -25,7 +46,7 @@ def get_train_transforms():
     )
 
 
-def get_valid_transforms():
+def get_valid_transforms(cfg=None):
     return A.Compose(
         [],
         bbox_params=A.BboxParams(
@@ -78,10 +99,25 @@ class DetectionAlbumentations:
         area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
         iscrowd = torch.zeros((len(boxes),), dtype=torch.int64)
 
-        target = target.copy()
-        target["boxes"] = boxes
-        target["labels"] = labels
-        target["area"] = area
-        target["iscrowd"] = iscrowd
-
-        return image, target
+        return {
+            "image": image,
+            "target": {
+                "image_id": target["image_id"],
+                "boxes": boxes,
+                "labels": labels,
+                "area": area,
+                "iscrowd": iscrowd,
+                "path": target["path"],
+                "width": target["width"],
+                "height": target["height"],
+            },
+        }["image"], {
+            "image_id": target["image_id"],
+            "boxes": boxes,
+            "labels": labels,
+            "area": area,
+            "iscrowd": iscrowd,
+            "path": target["path"],
+            "width": target["width"],
+            "height": target["height"],
+        }

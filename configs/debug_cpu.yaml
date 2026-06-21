@@ -2,8 +2,8 @@ data:
   data_dir: null
   train_split: train
   val_split: val
-  max_train_samples: null
-  max_val_samples: null
+  max_train_samples: 8
+  max_val_samples: 4
 
 model:
   name: fasterrcnn
@@ -15,7 +15,7 @@ model:
 
 optimizer:
   name: sgd
-  lr: 0.003
+  lr: 0.005
   momentum: 0.9
   weight_decay: 0.0005
 
@@ -25,14 +25,14 @@ scheduler:
 
 training:
   seed: 42
-  epochs: 20
-  batch_size: 8
-  num_workers: 4
-  device: auto
-  output_dir: outputs/fasterrcnn_mobilenet
+  epochs: 1
+  batch_size: 1
+  num_workers: 0
+  device: cpu
+  output_dir: outputs/debug_cpu
 
 early_stopping:
-  patience: 4
+  patience: null
   min_delta: 0.001
 
 ema:

@@ -188,6 +188,8 @@ outputs/
 
 checkpoints/
 
+certs/
+
 *.pt
 *.pth
 *.onnx
