@@ -11,6 +11,7 @@ from tqdm import tqdm
 from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
 from src.training.utils import collate_fn, get_device
+from src.data.transforms import DetectionAlbumentations, get_valid_transforms
 
 
 def move_targets_to_device(targets, device):
@@ -109,10 +110,7 @@ def main():
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
 
-    transforms = T.Compose([
-        T.ToImage(),
-        T.ToDtype(torch.float32, scale=True),
-    ])
+    transforms = DetectionAlbumentations(get_valid_transforms())
 
     val_dataset = CarDDDataset(
         data_dir=data_dir,

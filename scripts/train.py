@@ -5,11 +5,11 @@ import torch
 import yaml
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
-from torchvision.transforms import v2 as T
 
 from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
 from src.training.utils import collate_fn, set_seed, get_device
+from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
 
 
 def move_targets_to_device(targets, device):
@@ -163,21 +163,19 @@ def main():
     set_seed(cfg["training"]["seed"])
     epochs = cfg["training"]["epochs"]
 
-    transforms = T.Compose([
-        T.ToImage(),
-        T.ToDtype(torch.float32, scale=True),
-    ])
+    train_transforms = DetectionAlbumentations(get_train_transforms())
+    valid_transforms = DetectionAlbumentations(get_valid_transforms())
 
     train_dataset = CarDDDataset(
         data_dir=data_dir,
         split=cfg["data"]["train_split"],
-        transforms=transforms,
+        transforms=train_transforms,
     )
 
     val_dataset = CarDDDataset(
         data_dir=data_dir,
         split=cfg["data"]["val_split"],
-        transforms=transforms,
+        transforms=valid_transforms,
     )
 
     train_dataset = maybe_subset(train_dataset, cfg["data"].get("max_train_samples"))
