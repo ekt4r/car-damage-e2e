@@ -5,11 +5,12 @@ import torch
 import yaml
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
-from torchvision.transforms import v2 as T
 
 from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
 from src.training.utils import collate_fn, set_seed, get_device
+from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 
 def move_targets_to_device(targets, device):
@@ -97,6 +98,43 @@ def validate_loss(model, loader, device, epoch, epochs):
 
     return running_loss / step
 
+@torch.no_grad()
+def evaluate_map(model, loader, device, epoch, epochs):
+    model.eval()
+
+    metric = MeanAveragePrecision(class_metrics=True)
+
+    pbar = tqdm(loader, desc=f"mAP {epoch + 1}/{epochs}", leave=True)
+
+    for images, targets in pbar:
+        images = [img.to(device) for img in images]
+
+        outputs = model(images)
+
+        outputs = [
+            {k: v.cpu() for k, v in output.items()}
+            for output in outputs
+        ]
+
+        targets = [
+            {
+                "boxes": target["boxes"].cpu(),
+                "labels": target["labels"].cpu(),
+            }
+            for target in targets
+        ]
+
+        metric.update(outputs, targets)
+
+    metrics = metric.compute()
+
+    return {
+        "map": float(metrics["map"]),
+        "map_50": float(metrics["map_50"]),
+        "map_75": float(metrics["map_75"]),
+        "mar_100": float(metrics["mar_100"]),
+    }
+
 
 def maybe_subset(dataset, max_samples):
     if max_samples is None:
@@ -107,31 +145,20 @@ def maybe_subset(dataset, max_samples):
 def main():
     
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/train.yaml",
-    )
-
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        default=None,
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-    )
-
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=None,
-    )
-
+    parser.add_argument("--config", type=str, default="configs/train.yaml")
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
+    parser.add_argument("--momentum", type=float, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--max-train-samples", type=int, default=None)
+    parser.add_argument("--max-val-samples", type=int, default=None)
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -157,27 +184,55 @@ def main():
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.epochs is not None:
+        cfg["training"]["epochs"] = args.epochs
+
+    if args.batch_size is not None:
+        cfg["training"]["batch_size"] = args.batch_size
+
+    if args.num_workers is not None:
+        cfg["training"]["num_workers"] = args.num_workers
+
+    if args.device is not None:
+        cfg["training"]["device"] = args.device
+
+    if args.seed is not None:
+        cfg["training"]["seed"] = args.seed
+
+    if args.lr is not None:
+        cfg["optimizer"]["lr"] = args.lr
+
+    if args.weight_decay is not None:
+        cfg["optimizer"]["weight_decay"] = args.weight_decay
+
+    if args.momentum is not None:
+        cfg["optimizer"]["momentum"] = args.momentum
+
+    if args.max_train_samples is not None:
+        cfg["data"]["max_train_samples"] = args.max_train_samples
+
+    if args.max_val_samples is not None:
+        cfg["data"]["max_val_samples"] = args.max_val_samples
+
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
 
     set_seed(cfg["training"]["seed"])
     epochs = cfg["training"]["epochs"]
 
-    transforms = T.Compose([
-        T.ToImage(),
-        T.ToDtype(torch.float32, scale=True),
-    ])
+    train_transforms = DetectionAlbumentations(get_train_transforms())
+    valid_transforms = DetectionAlbumentations(get_valid_transforms())
 
     train_dataset = CarDDDataset(
         data_dir=data_dir,
         split=cfg["data"]["train_split"],
-        transforms=transforms,
+        transforms=train_transforms,
     )
 
     val_dataset = CarDDDataset(
         data_dir=data_dir,
         split=cfg["data"]["val_split"],
-        transforms=transforms,
+        transforms=valid_transforms,
     )
 
     train_dataset = maybe_subset(train_dataset, cfg["data"].get("max_train_samples"))
@@ -226,16 +281,23 @@ def main():
         enabled=device.type == "cuda",
     )
 
-    best_val_loss = float("inf")
+    best_map = -1.0
+    patience = cfg.get("early_stopping", {}).get("patience", None)
+    min_delta = cfg.get("early_stopping", {}).get("min_delta", 0.0)
+    epochs_without_improvement = 0
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, scaler, device, epoch, epochs)
         val_loss = validate_loss(model, val_loader, device, epoch, epochs)
+        val_metrics = evaluate_map(model, val_loader, device, epoch, epochs)
+        val_map = val_metrics["map"]
 
         print(
             f"Epoch {epoch + 1}/{epochs} | "
             f"train_loss={train_loss:.4f} | "
-            f"val_loss={val_loss:.4f}"
+            f"val_loss={val_loss:.4f} | "
+            f"mAP={val_metrics['map']:.4f} | "
+            f"mAP50={val_metrics['map_50']:.4f}"
         )
 
         checkpoint = {
@@ -247,14 +309,33 @@ def main():
             "train_loss": train_loss,
             "val_loss": val_loss,
             "config": cfg,
+            "val_map": val_metrics["map"],
+            "val_map_50": val_metrics["map_50"],
+            "val_map_75": val_metrics["map_75"],
+            "val_mar_100": val_metrics["mar_100"],
         }
 
         torch.save(checkpoint, output_dir / "last.pth")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_map > best_map:
+            best_map = val_map
             torch.save(checkpoint, output_dir / "best.pth")
-            print(f"Saved best checkpoint: val_loss={best_val_loss:.4f}")
+            print(f"Saved best checkpoint: mAP={best_map:.4f}")
+
+        if val_map > best_map + min_delta:
+            best_map = val_map
+            epochs_without_improvement = 0
+            torch.save(checkpoint, output_dir / "best.pth")
+            print(f"Saved best checkpoint: mAP={best_map:.4f}")
+        else:
+            epochs_without_improvement += 1
+
+        if patience is not None and epochs_without_improvement >= patience:
+            print(
+                f"Early stopping: no mAP improvement for "
+                f"{patience} epoch(s). Best mAP={best_map:.4f}"
+            )
+            break
 
         scheduler.step()
 

@@ -2,7 +2,7 @@ data:
   data_dir: null
   train_split: train
   val_split: val
-  max_train_samples: 16
+  max_train_samples: 64
   max_val_samples: 8
 
 model:
@@ -14,10 +14,19 @@ training:
   epochs: 1
   batch_size: 2
   num_workers: 0
-  device: auto
+  device: cpu
   output_dir: outputs/debug
 
 optimizer:
   lr: 0.005
   momentum: 0.9
   weight_decay: 0.0005
+
+evaluation:
+  metric: map
+  patience: 2
+  min_delta: 0.001
+
+early_stopping:
+  patience: 2
+  min_delta: 0.001
