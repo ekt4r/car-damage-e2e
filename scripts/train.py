@@ -15,6 +15,10 @@ from src.data.transforms import (
 )
 from src.models.detection import build_model
 from src.training.utils import collate_fn, get_device, set_seed
+from src.training.optim import build_optimizer
+from src.training.schedulers import build_scheduler
+from src.training.ema import ModelEMA
+from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
 
 
 def move_targets_to_device(targets, device):
@@ -27,7 +31,7 @@ def move_targets_to_device(targets, device):
     ]
 
 
-def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs):
+def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, ema=None):
     model.train()
 
     running_loss = 0.0
@@ -55,6 +59,9 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs):
 
             loss.backward()
             optimizer.step()
+
+        if ema is not None:
+            ema.update(model)
 
         loss_value = loss.item()
         running_loss += loss_value
@@ -231,8 +238,8 @@ def main():
     set_seed(cfg["training"]["seed"])
     epochs = cfg["training"]["epochs"]
 
-    train_transforms = DetectionAlbumentations(get_train_transforms())
-    valid_transforms = DetectionAlbumentations(get_valid_transforms())
+    train_transforms = DetectionAlbumentations(get_train_transforms(cfg))
+    valid_transforms = DetectionAlbumentations(get_valid_transforms(cfg))
 
     train_dataset = CarDDDataset(
         data_dir=data_dir,
@@ -267,26 +274,20 @@ def main():
         persistent_workers=cfg["training"]["num_workers"] > 0,
     )
 
-    model = build_model(
-        num_classes=cfg["model"]["num_classes"],
-        pretrained=cfg["model"]["pretrained"],
-    )
+    model = build_model(cfg)
     model.to(device)
 
-    optimizer = torch.optim.SGD(
-        [p for p in model.parameters() if p.requires_grad],
-        lr=cfg["optimizer"]["lr"],
-        momentum=cfg["optimizer"]["momentum"],
-        weight_decay=cfg["optimizer"]["weight_decay"],
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=epochs,
-    )
+    optimizer = build_optimizer(model, cfg)
+    scheduler = build_scheduler(optimizer, cfg, epochs)
+
     scaler = torch.amp.GradScaler(
         "cuda",
         enabled=device.type == "cuda",
     )
+
+    ema = None
+    if cfg.get("ema", {}).get("enabled", False):
+        ema = ModelEMA(model, decay=cfg["ema"]["decay"])
 
     best_map = -1.0
     patience = cfg.get("early_stopping", {}).get("patience")
@@ -343,7 +344,8 @@ def main():
             )
             break
 
-        scheduler.step()
+        if scheduler is not None:
+            scheduler.step()
 
 
 if __name__ == "__main__":
