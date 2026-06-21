@@ -28,8 +28,8 @@ training:
   epochs: 20
   batch_size: 8
   num_workers: 4
-  device: auto
-  output_dir: outputs/fasterrcnn_mobilenet
+  device: cuda
+  output_dir: outputs/strong_aug
 
 early_stopping:
   patience: 4
@@ -49,6 +49,6 @@ augmentations:
     brightness_contrast: true
     motion_blur: true
     gauss_noise: true
-    affine: false
+    affine: true
   valid:
     enabled: false

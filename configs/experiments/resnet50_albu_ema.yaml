@@ -1,6 +1,13 @@
+data:
+  data_dir: null
+  train_split: train
+  val_split: val
+  max_train_samples: null
+  max_val_samples: null
+
 model:
   name: fasterrcnn
-  backbone: mobilenet_v3_large_fpn
+  backbone: resnet50_fpn
   num_classes: 7
   pretrained: true
   min_size: 800
@@ -16,13 +23,25 @@ scheduler:
   name: cosine
   t_max: null
 
+training:
+  seed: 42
+  epochs: 20
+  batch_size: 4
+  num_workers: 4
+  device: cuda
+  output_dir: outputs/resnet50_albu_ema
+
+early_stopping:
+  patience: 4
+  min_delta: 0.001
+
 ema:
-  enabled: false
+  enabled: true
   decay: 0.999
 
 tta:
   enabled: false
-  horizontal_flip: true
+  horizontal_flip: false
 
 augmentations:
   train:

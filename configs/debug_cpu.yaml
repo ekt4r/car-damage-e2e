@@ -2,26 +2,53 @@ data:
   data_dir: null
   train_split: train
   val_split: val
-  max_train_samples: 64
-  max_val_samples: 8
+  max_train_samples: 8
+  max_val_samples: 4
 
 model:
+  name: fasterrcnn
+  backbone: mobilenet_v3_large_fpn
   num_classes: 7
   pretrained: true
-
-training:
-  seed: 42
-  epochs: 1
-  batch_size: 2
-  num_workers: 0
-  device: cpu
-  output_dir: outputs/debug_cpu
+  min_size: 800
+  max_size: 1333
 
 optimizer:
+  name: sgd
   lr: 0.005
   momentum: 0.9
   weight_decay: 0.0005
 
+scheduler:
+  name: cosine
+  t_max: null
+
+training:
+  seed: 42
+  epochs: 1
+  batch_size: 1
+  num_workers: 0
+  device: cpu
+  output_dir: outputs/debug_cpu
+
 early_stopping:
-  patience: 2
+  patience: null
   min_delta: 0.001
+
+ema:
+  enabled: false
+  decay: 0.999
+
+tta:
+  enabled: false
+  horizontal_flip: false
+
+augmentations:
+  train:
+    horizontal_flip: true
+    brightness_contrast: true
+    motion_blur: true
+    gauss_noise: true
+    affine: false
+  valid:
+    enabled: false

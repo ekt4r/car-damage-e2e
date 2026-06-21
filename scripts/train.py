@@ -19,6 +19,7 @@ from src.training.optim import build_optimizer
 from src.training.schedulers import build_scheduler
 from src.training.ema import ModelEMA
 from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
+from src.training.tta import predict_with_tta
 
 
 def move_targets_to_device(targets, device):
@@ -110,7 +111,7 @@ def validate_loss(model, loader, device, epoch, epochs):
 
 
 @torch.no_grad()
-def evaluate_map(model, loader, device, epoch, epochs):
+def evaluate_map(model, loader, device, epoch, epochs, cfg):
     model.eval()
 
     metric = MeanAveragePrecision(class_metrics=True)
@@ -119,7 +120,11 @@ def evaluate_map(model, loader, device, epoch, epochs):
 
     for images, targets in pbar:
         images = [img.to(device) for img in images]
-        outputs = model(images)
+        outputs = predict_with_tta(
+            model,
+            images,
+            enabled=cfg["tta"]["enabled"],
+        )
 
         outputs = [
             {k: v.cpu() for k, v in output.items()}
@@ -296,10 +301,18 @@ def main():
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(
-            model, train_loader, optimizer, scaler, device, epoch, epochs
+            model,
+            train_loader,
+            optimizer,
+            scaler,
+            device,
+            epoch,
+            epochs,
+            ema=ema,
         )
-        val_loss = validate_loss(model, val_loader, device, epoch, epochs)
-        val_metrics = evaluate_map(model, val_loader, device, epoch, epochs)
+        eval_model = ema.ema if ema is not None else model
+        val_loss = validate_loss(eval_model, val_loader, device, epoch, epochs)
+        val_metrics = evaluate_map(eval_model, val_loader, device, epoch, epochs, cfg)
         val_map = val_metrics["map"]
 
         print(

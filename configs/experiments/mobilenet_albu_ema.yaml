@@ -28,15 +28,15 @@ training:
   epochs: 20
   batch_size: 8
   num_workers: 4
-  device: auto
-  output_dir: outputs/fasterrcnn_mobilenet
+  device: cuda
+  output_dir: outputs/mobilenet_albu_ema
 
 early_stopping:
   patience: 4
   min_delta: 0.001
 
 ema:
-  enabled: false
+  enabled: true
   decay: 0.999
 
 tta:
