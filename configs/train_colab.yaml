@@ -9,7 +9,7 @@ model:
   pretrained: true
 
 training:
-  epochs: 19
+  epochs: 20
   batch_size: 8
   num_workers: 4
   device: cuda
@@ -22,5 +22,9 @@ optimizer:
 
 evaluation:
   metric: map
+  patience: 2
+  min_delta: 0.001
+
+early_stopping:
   patience: 2
   min_delta: 0.001

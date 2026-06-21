@@ -21,3 +21,12 @@ optimizer:
   lr: 0.005
   momentum: 0.9
   weight_decay: 0.0005
+
+evaluation:
+  metric: map
+  patience: 2
+  min_delta: 0.001
+
+early_stopping:
+  patience: 2
+  min_delta: 0.001

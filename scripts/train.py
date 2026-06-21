@@ -10,7 +10,7 @@ from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
 from src.training.utils import collate_fn, set_seed, get_device
 from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
-from scripts.evaluate import evaluate
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 
 def move_targets_to_device(targets, device):
@@ -97,6 +97,43 @@ def validate_loss(model, loader, device, epoch, epochs):
         )
 
     return running_loss / step
+
+@torch.no_grad()
+def evaluate_map(model, loader, device, epoch, epochs):
+    model.eval()
+
+    metric = MeanAveragePrecision(class_metrics=True)
+
+    pbar = tqdm(loader, desc=f"mAP {epoch + 1}/{epochs}", leave=True)
+
+    for images, targets in pbar:
+        images = [img.to(device) for img in images]
+
+        outputs = model(images)
+
+        outputs = [
+            {k: v.cpu() for k, v in output.items()}
+            for output in outputs
+        ]
+
+        targets = [
+            {
+                "boxes": target["boxes"].cpu(),
+                "labels": target["labels"].cpu(),
+            }
+            for target in targets
+        ]
+
+        metric.update(outputs, targets)
+
+    metrics = metric.compute()
+
+    return {
+        "map": float(metrics["map"]),
+        "map_50": float(metrics["map_50"]),
+        "map_75": float(metrics["map_75"]),
+        "mar_100": float(metrics["mar_100"]),
+    }
 
 
 def maybe_subset(dataset, max_samples):
@@ -244,16 +281,23 @@ def main():
         enabled=device.type == "cuda",
     )
 
-    best_val_loss = float("inf")
+    best_map = -1.0
+    patience = cfg.get("early_stopping", {}).get("patience", None)
+    min_delta = cfg.get("early_stopping", {}).get("min_delta", 0.0)
+    epochs_without_improvement = 0
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, scaler, device, epoch, epochs)
         val_loss = validate_loss(model, val_loader, device, epoch, epochs)
+        val_metrics = evaluate_map(model, val_loader, device, epoch, epochs)
+        val_map = val_metrics["map"]
 
         print(
             f"Epoch {epoch + 1}/{epochs} | "
             f"train_loss={train_loss:.4f} | "
-            f"val_loss={val_loss:.4f}"
+            f"val_loss={val_loss:.4f} | "
+            f"mAP={val_metrics['map']:.4f} | "
+            f"mAP50={val_metrics['map_50']:.4f}"
         )
 
         checkpoint = {
@@ -265,14 +309,33 @@ def main():
             "train_loss": train_loss,
             "val_loss": val_loss,
             "config": cfg,
+            "val_map": val_metrics["map"],
+            "val_map_50": val_metrics["map_50"],
+            "val_map_75": val_metrics["map_75"],
+            "val_mar_100": val_metrics["mar_100"],
         }
 
         torch.save(checkpoint, output_dir / "last.pth")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_map > best_map:
+            best_map = val_map
             torch.save(checkpoint, output_dir / "best.pth")
-            print(f"Saved best checkpoint: val_loss={best_val_loss:.4f}")
+            print(f"Saved best checkpoint: mAP={best_map:.4f}")
+
+        if val_map > best_map + min_delta:
+            best_map = val_map
+            epochs_without_improvement = 0
+            torch.save(checkpoint, output_dir / "best.pth")
+            print(f"Saved best checkpoint: mAP={best_map:.4f}")
+        else:
+            epochs_without_improvement += 1
+
+        if patience is not None and epochs_without_improvement >= patience:
+            print(
+                f"Early stopping: no mAP improvement for "
+                f"{patience} epoch(s). Best mAP={best_map:.4f}"
+            )
+            break
 
         scheduler.step()
 
