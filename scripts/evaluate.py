@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 import yaml
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 from torchvision.transforms import v2 as T
 from tqdm import tqdm
@@ -73,25 +73,13 @@ def evaluate(model, loader, device):
 def main():
 
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/train.yaml",
-    )
-
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        required=True,
-    )
-
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        default=None,
-    )
-
+    parser.add_argument("--config", type=str, default="configs/train.yaml",)
+    parser.add_argument("--checkpoint", type=str, required=True)
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--max-val-samples", type=int, default=None)
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -106,6 +94,20 @@ def main():
             "Dataset directory is not specified. "
             "Pass --data-dir or set data.data_dir in the config."
         )
+    
+    if args.batch_size is not None:
+        cfg["training"]["batch_size"] = args.batch_size
+
+    if args.num_workers is not None:
+        cfg["training"]["num_workers"] = args.num_workers
+
+    if args.device is not None:
+        cfg["training"]["device"] = args.device
+
+    if args.max_val_samples is not None:
+        cfg["data"]["max_val_samples"] = args.max_val_samples
+
+    max_val_samples = cfg["data"].get("max_val_samples")
 
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
@@ -117,6 +119,14 @@ def main():
         split=cfg["data"]["val_split"],
         transforms=transforms,
     )
+
+    max_val_samples = cfg["data"].get("max_val_samples")
+
+    if max_val_samples is not None:
+        val_dataset = Subset(
+            val_dataset,
+            range(min(max_val_samples, len(val_dataset))),
+        )
 
     val_loader = DataLoader(
         val_dataset,

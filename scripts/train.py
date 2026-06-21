@@ -10,6 +10,7 @@ from src.data.dataset import CarDDDataset
 from src.models.detection import build_model
 from src.training.utils import collate_fn, set_seed, get_device
 from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
+from scripts.evaluate import evaluate
 
 
 def move_targets_to_device(targets, device):
@@ -107,31 +108,20 @@ def maybe_subset(dataset, max_samples):
 def main():
     
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/train.yaml",
-    )
-
-    parser.add_argument(
-        "--data-dir",
-        type=str,
-        default=None,
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-    )
-
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=None,
-    )
-
+    parser.add_argument("--config", type=str, default="configs/train.yaml")
+    parser.add_argument("--data-dir", type=str, default=None)
+    parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
+    parser.add_argument("--momentum", type=float, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--max-train-samples", type=int, default=None)
+    parser.add_argument("--max-val-samples", type=int, default=None)
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
@@ -156,6 +146,36 @@ def main():
         else Path(cfg["training"]["output_dir"])
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.epochs is not None:
+        cfg["training"]["epochs"] = args.epochs
+
+    if args.batch_size is not None:
+        cfg["training"]["batch_size"] = args.batch_size
+
+    if args.num_workers is not None:
+        cfg["training"]["num_workers"] = args.num_workers
+
+    if args.device is not None:
+        cfg["training"]["device"] = args.device
+
+    if args.seed is not None:
+        cfg["training"]["seed"] = args.seed
+
+    if args.lr is not None:
+        cfg["optimizer"]["lr"] = args.lr
+
+    if args.weight_decay is not None:
+        cfg["optimizer"]["weight_decay"] = args.weight_decay
+
+    if args.momentum is not None:
+        cfg["optimizer"]["momentum"] = args.momentum
+
+    if args.max_train_samples is not None:
+        cfg["data"]["max_train_samples"] = args.max_train_samples
+
+    if args.max_val_samples is not None:
+        cfg["data"]["max_val_samples"] = args.max_val_samples
 
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
