@@ -5,23 +5,23 @@ import torch
 import yaml
 from torch.utils.data import DataLoader, Subset
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
-from torchvision.transforms import v2 as T
 from tqdm import tqdm
 
 from src.data.dataset import CarDDDataset
+from src.data.coco import read_coco_json, get_split_paths
 from src.models.detection import build_model
 from src.training.utils import collate_fn, get_device
 from src.data.transforms import DetectionAlbumentations, get_valid_transforms
 
 
-def move_targets_to_device(targets, device):
-    return [
-        {
-            k: v.to(device) if hasattr(v, "to") else v
-            for k, v in target.items()
-        }
-        for target in targets
-    ]
+DEFAULT_CLASS_NAMES = {
+    1: "dent",
+    2: "scratch",
+    3: "crack",
+    4: "glass shatter",
+    5: "lamp broken",
+    6: "tire flat",
+}
 
 
 def load_checkpoint(model, checkpoint_path, device):
@@ -34,6 +34,22 @@ def load_checkpoint(model, checkpoint_path, device):
     model.load_state_dict(checkpoint["model_state_dict"])
 
     return model
+
+
+def load_class_names(data_dir, val_split):
+    annotations_path = get_split_paths(data_dir, val_split)["annotations_path"]
+    if not annotations_path.exists():
+        return DEFAULT_CLASS_NAMES
+
+    coco = read_coco_json(annotations_path)
+    categories = coco.get("categories", [])
+    if not categories:
+        return DEFAULT_CLASS_NAMES
+
+    return {
+        int(category["id"]): category["name"]
+        for category in categories
+    }
 
 
 @torch.no_grad()
@@ -82,12 +98,16 @@ def main():
     parser.add_argument("--max-val-samples", type=int, default=None)
     args = parser.parse_args()
 
-    with open(args.config, "r") as f:
+    with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+
+    cfg.setdefault("data", {})
+    cfg.setdefault("training", {})
 
     if args.data_dir is not None:
         data_dir = Path(args.data_dir)
-    elif cfg["data"]["data_dir"] is not None:
+        cfg["data"]["data_dir"] = str(data_dir)
+    elif cfg["data"].get("data_dir") is not None:
         data_dir = Path(cfg["data"]["data_dir"])
     else:
         raise ValueError(
@@ -107,9 +127,7 @@ def main():
     if args.max_val_samples is not None:
         cfg["data"]["max_val_samples"] = args.max_val_samples
 
-    max_val_samples = cfg["data"].get("max_val_samples")
-
-    device = get_device(cfg["training"]["device"])
+    device = get_device(cfg["training"].get("device", "auto"))
     print(f"Using device: {device}")
 
     transforms = DetectionAlbumentations(get_valid_transforms())
@@ -154,18 +172,21 @@ def main():
         val_loader,
         device,
     )
+    class_names = load_class_names(data_dir, cfg["data"]["val_split"])
 
     print("\n========== Evaluation ==========")
     print(f"mAP        : {metrics['map']:.4f}")
-    print(f"mAP@50     : {metrics['map_50']:.4f}")
-    print(f"mAP@75     : {metrics['map_75']:.4f}")
-    print(f"mAR@100    : {metrics['mar_100']:.4f}")
+    print(f"mAP50      : {metrics['map_50']:.4f}")
+    print(f"mAP75      : {metrics['map_75']:.4f}")
+    print(f"mAR100     : {metrics['mar_100']:.4f}")
 
     if "classes" in metrics and "map_per_class" in metrics:
         print("\nPer-class AP")
 
         for cls, ap in zip(metrics["classes"], metrics["map_per_class"]):
-            print(f"Class {int(cls):2d}: {float(ap):.4f}")
+            class_id = int(cls)
+            class_name = class_names.get(class_id, f"class {class_id}")
+            print(f"{class_name:14s} ({class_id:2d}): {float(ap):.4f}")
 
 
 if __name__ == "__main__":

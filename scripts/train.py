@@ -3,14 +3,18 @@ from pathlib import Path
 
 import torch
 import yaml
-from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
+from tqdm import tqdm
 
 from src.data.dataset import CarDDDataset
+from src.data.transforms import (
+    DetectionAlbumentations,
+    get_train_transforms,
+    get_valid_transforms,
+)
 from src.models.detection import build_model
-from src.training.utils import collate_fn, set_seed, get_device
-from src.data.transforms import DetectionAlbumentations, get_train_transforms, get_valid_transforms
-from torchmetrics.detection.mean_ap import MeanAveragePrecision
+from src.training.utils import collate_fn, get_device, set_seed
 
 
 def move_targets_to_device(targets, device):
@@ -68,7 +72,6 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs):
 @torch.no_grad()
 def validate_loss(model, loader, device, epoch, epochs):
     # TorchVision detection models return losses only in train mode.
-    # We use no_grad(), so weights are not updated.
     model.train()
 
     running_loss = 0.0
@@ -98,6 +101,7 @@ def validate_loss(model, loader, device, epoch, epochs):
 
     return running_loss / step
 
+
 @torch.no_grad()
 def evaluate_map(model, loader, device, epoch, epochs):
     model.eval()
@@ -108,14 +112,12 @@ def evaluate_map(model, loader, device, epoch, epochs):
 
     for images, targets in pbar:
         images = [img.to(device) for img in images]
-
         outputs = model(images)
 
         outputs = [
             {k: v.cpu() for k, v in output.items()}
             for output in outputs
         ]
-
         targets = [
             {
                 "boxes": target["boxes"].cpu(),
@@ -142,13 +144,36 @@ def maybe_subset(dataset, max_samples):
     return Subset(dataset, range(min(max_samples, len(dataset))))
 
 
+def apply_overrides(cfg, args):
+    if args.epochs is not None:
+        cfg["training"]["epochs"] = args.epochs
+    if args.batch_size is not None:
+        cfg["training"]["batch_size"] = args.batch_size
+    if args.num_workers is not None:
+        cfg["training"]["num_workers"] = args.num_workers
+    if args.device is not None:
+        cfg["training"]["device"] = args.device
+    if args.seed is not None:
+        cfg["training"]["seed"] = args.seed
+    if args.lr is not None:
+        cfg["optimizer"]["lr"] = args.lr
+    if args.weight_decay is not None:
+        cfg["optimizer"]["weight_decay"] = args.weight_decay
+    if args.momentum is not None:
+        cfg["optimizer"]["momentum"] = args.momentum
+    if args.max_train_samples is not None:
+        cfg["data"]["max_train_samples"] = args.max_train_samples
+    if args.max_val_samples is not None:
+        cfg["data"]["max_val_samples"] = args.max_val_samples
+
+    return cfg
+
+
 def main():
-    
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/train.yaml")
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None)
-    parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
@@ -164,55 +189,41 @@ def main():
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    print("=" * 60)
-    print(yaml.dump(cfg, sort_keys=False))
-    print("=" * 60)
+    cfg.setdefault("data", {})
+    cfg.setdefault("model", {})
+    cfg.setdefault("training", {})
+    cfg.setdefault("optimizer", {})
+    cfg.setdefault("early_stopping", {})
+
+    cfg["training"].setdefault("seed", 42)
+    cfg["training"].setdefault("device", "auto")
+    cfg["training"].setdefault("num_workers", 0)
+    cfg["model"].setdefault("pretrained", True)
+
+    cfg = apply_overrides(cfg, args)
 
     if args.data_dir is not None:
         data_dir = Path(args.data_dir)
-    elif cfg["data"]["data_dir"] is not None:
+        cfg["data"]["data_dir"] = str(data_dir)
+    elif cfg["data"].get("data_dir") is not None:
         data_dir = Path(cfg["data"]["data_dir"])
     else:
         raise ValueError(
             "Dataset directory is not specified. "
             "Pass --data-dir or set data.data_dir in the config."
         )
+
     output_dir = (
         Path(args.output_dir)
         if args.output_dir is not None
         else Path(cfg["training"]["output_dir"])
     )
+    cfg["training"]["output_dir"] = str(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.epochs is not None:
-        cfg["training"]["epochs"] = args.epochs
-
-    if args.batch_size is not None:
-        cfg["training"]["batch_size"] = args.batch_size
-
-    if args.num_workers is not None:
-        cfg["training"]["num_workers"] = args.num_workers
-
-    if args.device is not None:
-        cfg["training"]["device"] = args.device
-
-    if args.seed is not None:
-        cfg["training"]["seed"] = args.seed
-
-    if args.lr is not None:
-        cfg["optimizer"]["lr"] = args.lr
-
-    if args.weight_decay is not None:
-        cfg["optimizer"]["weight_decay"] = args.weight_decay
-
-    if args.momentum is not None:
-        cfg["optimizer"]["momentum"] = args.momentum
-
-    if args.max_train_samples is not None:
-        cfg["data"]["max_train_samples"] = args.max_train_samples
-
-    if args.max_val_samples is not None:
-        cfg["data"]["max_val_samples"] = args.max_val_samples
+    print("=" * 60)
+    print(yaml.dump(cfg, sort_keys=False))
+    print("=" * 60)
 
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
@@ -228,7 +239,6 @@ def main():
         split=cfg["data"]["train_split"],
         transforms=train_transforms,
     )
-
     val_dataset = CarDDDataset(
         data_dir=data_dir,
         split=cfg["data"]["val_split"],
@@ -247,7 +257,6 @@ def main():
         pin_memory=device.type == "cuda",
         persistent_workers=cfg["training"]["num_workers"] > 0,
     )
-
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg["training"]["batch_size"],
@@ -270,24 +279,24 @@ def main():
         momentum=cfg["optimizer"]["momentum"],
         weight_decay=cfg["optimizer"]["weight_decay"],
     )
-
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
         T_max=epochs,
     )
-
     scaler = torch.amp.GradScaler(
         "cuda",
         enabled=device.type == "cuda",
     )
 
     best_map = -1.0
-    patience = cfg.get("early_stopping", {}).get("patience", None)
+    patience = cfg.get("early_stopping", {}).get("patience")
     min_delta = cfg.get("early_stopping", {}).get("min_delta", 0.0)
     epochs_without_improvement = 0
 
     for epoch in range(epochs):
-        train_loss = train_one_epoch(model, train_loader, optimizer, scaler, device, epoch, epochs)
+        train_loss = train_one_epoch(
+            model, train_loader, optimizer, scaler, device, epoch, epochs
+        )
         val_loss = validate_loss(model, val_loader, device, epoch, epochs)
         val_metrics = evaluate_map(model, val_loader, device, epoch, epochs)
         val_map = val_metrics["map"]
@@ -297,7 +306,9 @@ def main():
             f"train_loss={train_loss:.4f} | "
             f"val_loss={val_loss:.4f} | "
             f"mAP={val_metrics['map']:.4f} | "
-            f"mAP50={val_metrics['map_50']:.4f}"
+            f"mAP50={val_metrics['map_50']:.4f} | "
+            f"mAP75={val_metrics['map_75']:.4f} | "
+            f"mAR100={val_metrics['mar_100']:.4f}"
         )
 
         checkpoint = {
@@ -308,19 +319,14 @@ def main():
             "scaler_state_dict": scaler.state_dict(),
             "train_loss": train_loss,
             "val_loss": val_loss,
-            "config": cfg,
             "val_map": val_metrics["map"],
             "val_map_50": val_metrics["map_50"],
             "val_map_75": val_metrics["map_75"],
             "val_mar_100": val_metrics["mar_100"],
+            "config": cfg,
         }
 
         torch.save(checkpoint, output_dir / "last.pth")
-
-        if val_map > best_map:
-            best_map = val_map
-            torch.save(checkpoint, output_dir / "best.pth")
-            print(f"Saved best checkpoint: mAP={best_map:.4f}")
 
         if val_map > best_map + min_delta:
             best_map = val_map
