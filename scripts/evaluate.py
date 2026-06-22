@@ -154,10 +154,7 @@ def main():
         collate_fn=collate_fn,
     )
 
-    model = build_model(
-        num_classes=cfg["model"]["num_classes"],
-        pretrained=False,
-    )
+    model = build_model(cfg)
 
     model = load_checkpoint(
         model,

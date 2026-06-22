@@ -5,6 +5,14 @@ Production-ready car damage detection system.
 |---|---|---:|---:|---:|---:|
 | Faster R-CNN MobileNetV3 FPN | None | 5 | 0.4318 | 0.6307 | 0.4730 |
 | Faster R-CNN MobileNetV3 FPN | Albumentations | 20 | 0.4681 | 0.6495 | 0.5060 |
+| Faster R-CNN ResNet50 FPN + EMA | Albumentations | 15/20 | 0.4720 | 0.6707 | 0.5008 |
+| Faster R-CNN MobileNetV3 FPN + custom anchors | Albumentations | TBD | TBD | TBD | TBD |
+| RetinaNet ResNet50 FPN + custom anchors | Albumentations | TBD | TBD | TBD | TBD |
+| FCOS ResNet50 FPN | Albumentations | TBD | TBD | TBD | TBD |
+
+Best ResNet50 + EMA checkpoint at epoch 15: val_loss=0.3051, mAR100=0.6209.
+Per-class AP: dent=0.2016, scratch=0.2345, crack=0.1415, glass shatter=0.8501,
+lamp broken=0.5777, tire flat=0.7555.
 
 ## Commands
 
@@ -13,7 +21,23 @@ make validate
 make debug
 make train
 make eval
+make predict
 ```
+
+Generate GT vs prediction visualizations:
+
+```bash
+python scripts/predict.py \
+  --config configs/experiments/resnet50_albu_ema.yaml \
+  --checkpoint outputs/resnet50_albu_ema/best.pth \
+  --data-dir data/raw/CarDD_COCO \
+  --output-dir outputs/predictions \
+  --num-samples 50 \
+  --num-class-samples 50
+```
+
+Outputs are saved to `outputs/predictions/all`, `outputs/predictions/dent`,
+`outputs/predictions/scratch`, and `outputs/predictions/crack`.
 
 ## API
 

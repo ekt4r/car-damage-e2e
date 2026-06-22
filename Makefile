@@ -1,4 +1,4 @@
-.PHONY: validate debug train eval api api-https
+.PHONY: validate debug train eval predict api api-https
 
 DATA_DIR ?= data/raw/CarDD_COCO
 OUTPUT_DIR ?= outputs/fasterrcnn_mobilenet_baseline
@@ -20,6 +20,9 @@ train:
 
 eval:
 	python scripts/evaluate.py --config configs/train.yaml --checkpoint $(OUTPUT_DIR)/best.pth --data-dir $(DATA_DIR)
+
+predict:
+	python scripts/predict.py --config configs/train.yaml --checkpoint $(CHECKPOINT) --data-dir $(DATA_DIR)
 
 api:
 	MODEL_CHECKPOINT=$(CHECKPOINT) uvicorn src.api.main:app --host $(HOST) --port $(PORT)
