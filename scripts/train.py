@@ -24,15 +24,21 @@ from src.training.tta import predict_with_tta
 
 def move_targets_to_device(targets, device):
     return [
-        {
-            k: v.to(device) if hasattr(v, "to") else v
-            for k, v in target.items()
-        }
+        {k: v.to(device) if hasattr(v, "to") else v for k, v in target.items()}
         for target in targets
     ]
 
 
-def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, ema=None):
+def format_loss_dict(loss_dict):
+    return ", ".join(f"{name}={value.item():.6g}" for name, value in loss_dict.items())
+
+
+def assert_finite_loss(loss, loss_dict, phase):
+    if not torch.isfinite(loss):
+        raise FloatingPointError(f"Non-finite {phase} loss: {format_loss_dict(loss_dict)}")
+
+
+def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, amp_enabled, ema=None):
     model.train()
 
     running_loss = 0.0
@@ -46,11 +52,12 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, ema
 
         optimizer.zero_grad()
 
-        if device.type == "cuda":
-            with torch.amp.autocast(device_type="cuda"):
+        if amp_enabled:
+            with torch.amp.autocast(device_type="cuda", enabled=True):
                 loss_dict = model(images, targets)
                 loss = sum(loss_dict.values())
 
+            assert_finite_loss(loss, loss_dict, "train")
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -58,6 +65,7 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, ema
             loss_dict = model(images, targets)
             loss = sum(loss_dict.values())
 
+            assert_finite_loss(loss, loss_dict, "train")
             loss.backward()
             optimizer.step()
 
@@ -78,7 +86,7 @@ def train_one_epoch(model, loader, optimizer, scaler, device, epoch, epochs, ema
 
 
 @torch.no_grad()
-def validate_loss(model, loader, device, epoch, epochs):
+def validate_loss(model, loader, device, epoch, epochs, amp_enabled):
     # TorchVision detection models return losses only in train mode.
     model.train()
 
@@ -93,11 +101,12 @@ def validate_loss(model, loader, device, epoch, epochs):
 
         with torch.amp.autocast(
             device_type=device.type,
-            enabled=device.type == "cuda",
+            enabled=amp_enabled,
         ):
             loss_dict = model(images, targets)
             loss = sum(loss_dict.values())
 
+        assert_finite_loss(loss, loss_dict, "validation")
         loss_value = loss.item()
         running_loss += loss_value
         step += 1
@@ -126,10 +135,7 @@ def evaluate_map(model, loader, device, epoch, epochs, cfg):
             enabled=cfg["tta"]["enabled"],
         )
 
-        outputs = [
-            {k: v.cpu() for k, v in output.items()}
-            for output in outputs
-        ]
+        outputs = [{k: v.cpu() for k, v in output.items()} for output in outputs]
         targets = [
             {
                 "boxes": target["boxes"].cpu(),
@@ -210,6 +216,7 @@ def main():
     cfg["training"].setdefault("seed", 42)
     cfg["training"].setdefault("device", "auto")
     cfg["training"].setdefault("num_workers", 0)
+    cfg["training"].setdefault("amp", True)
     cfg["model"].setdefault("pretrained", True)
 
     cfg = apply_overrides(cfg, args)
@@ -239,6 +246,8 @@ def main():
 
     device = get_device(cfg["training"]["device"])
     print(f"Using device: {device}")
+    amp_enabled = device.type == "cuda" and cfg["training"].get("amp", True)
+    print(f"AMP enabled: {amp_enabled}")
 
     set_seed(cfg["training"]["seed"])
     epochs = cfg["training"]["epochs"]
@@ -287,7 +296,7 @@ def main():
 
     scaler = torch.amp.GradScaler(
         "cuda",
-        enabled=device.type == "cuda",
+        enabled=amp_enabled,
     )
 
     ema = None
@@ -308,10 +317,11 @@ def main():
             device,
             epoch,
             epochs,
+            amp_enabled,
             ema=ema,
         )
         eval_model = ema.ema if ema is not None else model
-        val_loss = validate_loss(eval_model, val_loader, device, epoch, epochs)
+        val_loss = validate_loss(eval_model, val_loader, device, epoch, epochs, amp_enabled)
         val_metrics = evaluate_map(eval_model, val_loader, device, epoch, epochs, cfg)
         val_map = val_metrics["map"]
 

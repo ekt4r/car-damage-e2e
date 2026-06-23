@@ -31,6 +31,7 @@ training:
   batch_size: 4
   num_workers: 4
   device: cuda
+  amp: false
   output_dir: outputs/fcos_resnet50_albu
 
 early_stopping:
